@@ -80,7 +80,7 @@ def trie_chooser(hash):
             t.insert(hash(w), w)
         def find(message):
             r = random.Random(message)
-            return t.random_walk(r).value
+            return t.random_walk(r)
         return find
     return chooser
 
