@@ -3,7 +3,6 @@ import os.path
 
 
 class Node:
-    is_node = True
     def __init__(self, pos, mask):
         self.pos = pos
         self.mask = mask
@@ -51,9 +50,50 @@ class Node:
                 return self.one_bit, entry
 
         return self, entry
-class Entry:
-    is_node = False
 
+            
+    def insert(self, key, new_node):
+        # case: 
+            # i am root, and too fine
+            # so should return new_node
+        if self.finer_than(new_node):
+            if self.direction(key) == 1:
+                new_node.zero_bit = self
+            else:
+                new_node.one_bit = self
+            return new_node
+        else:
+            if self.direction(key) == 1:
+                self.one_bit = self.one_bit.insert(key, new_node)
+            else:
+                self.zero_but = self.zero_but.insert(key, new_node)
+            return self
+
+
+    def finer_than(self, node):
+        return (self.pos > node.pos) or \
+               (self.pos == node.pos and cursor.mask > node.mask)
+        # mask is inverted so if a > b then a's mask is for lower bit (longer prefix)
+
+    @classmethod
+    def between(cls, key_a, key_b):
+        prefix = os.path.commonprefix((key_a, key_b))
+        new_pos = len(prefix)
+
+        a_byte = 0 if new_pos >= len(key_a) else key_a[new_pos]
+        b_byte = 0 if new_pos >= len(key_b) else key_b[new_pos]
+        new_mask = b_byte ^ a_byte
+
+        if new_mask == 0:
+            raise AssertionError('what')
+        
+        while new_mask & (new_mask-1) != 0: # all but one bit is set
+            new_mask = new_mask & (new_mask-1) # clear out lower order bit
+        new_mask = new_mask ^ 255 # We use an inverted mask to make other things nicer.
+
+        return cls(new_pos, new_mask)
+        
+class Entry:
     def __init__(self, key, value):
         self.key = key
         self.value = value
@@ -68,6 +108,16 @@ class Entry:
             return None, key
         else:
             return self, None
+
+    def insert(self, key, node):
+        node.set(self)
+        return node
+
+    def finer_than(self, node):
+        return True
+
+    def __str__(self):
+        return "<Entry {}:{}>".format(self.key, self.value)
 
 class Tree:
     def __init__(self):
@@ -87,47 +137,13 @@ class Tree:
         if key == entry_key:
             return entry
         
-        prefix = os.path.commonprefix((key, entry_key))
-        new_pos = len(prefix)
-
-        k_byte = 0 if new_pos >= key_len else key[new_pos]
-        e_byte = 0 if new_pos >= len(entry_key) else entry_key[new_pos]
-        new_mask = k_byte ^ e_byte
-
-        if new_mask == 0:
-            raise AssertionError('what')
-        
-        while new_mask & (new_mask-1) != 0: # all but one bit is set
-            new_mask = new_mask & (new_mask-1) # clear out lower order bit
-        new_mask = new_mask ^ 255 # We use an inverted mask to make other things nicer.
-
-        new_node = Node(new_pos, new_mask)
         new_entry = Entry(key, value)
+        new_node = Node.between(key, entry_key)
 
-        new_node.set(Entry(key, value))
-            
-        # Insert new Entry
-        cursor = self.root
-        prev_cursor = None
-        while True:
-            if not cursor.is_node:
-                break
-            if cursor.pos > new_pos:
-                break
-            if cursor.pos == key_len and cursor.mask > new_mask:
-                # mask is inverted so if a > b then a's mask is for lower bit (longer prefix)
-                break
-            prev_cursor, cursor = cursor, cursor.get(key)
+        new_node.set(new_entry)
 
-        if new_node.direction(key) == 1:
-            new_node.zero_bit = cursor
-        else:
-            new_node.one_bit = cursor
+        self.root = self.root.insert(key, new_node)
 
-        if prev_cursor is None:
-            self.root = new_node
-        else:
-            prev_cursor.swap(cursor, new_node)
         return new_entry
 
     def lookup(self, key):
