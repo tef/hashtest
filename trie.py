@@ -9,6 +9,8 @@ class Node:
         self.mask = mask
         self.zero_bit = None
         self.one_bit = None
+        self.n_zero = 0
+        self.n_one = 0
 
     def direction(self, key):
         # Mask is 1101111 so if or'd we get ff if bit 5 is set
@@ -19,8 +21,10 @@ class Node:
     def set(self, entry):
         if self.direction(entry.key) == 1:
             self.one_bit = entry
+            self.n_one = self.one_bit.count()
         else:
             self.zero_bit = entry
+            self.n_zero = self.zero_bit.count()
     
     def get(self, key):
         if self.direction(key) == 1:
@@ -39,19 +43,24 @@ class Node:
 
     def find_top(self, key, current_top):
         if self.pos < len(key):
-            return self.get(key).find_top(key, self)
+            top = self.get(key)
+            return top.find_top(key, top)
         return current_top
 
+    def count(self):
+        return self.n_zero+self.n_one
 
     def delete(self, key):
         if self.direction(key) == 1:
             self.one_bit, entry = self.one_bit.delete(key)
             if self.one_bit is None:
                 return self.zero_bit, entry
+            self.n_one = self.one_bit.count()
         else:
             self.zero_bit, entry = self.zero_bit.delete(key)
             if self.zero_bit is None:
                 return self.one_bit, entry
+            self.n_zero = self.zero_bit.count()
 
         return self, entry
 
@@ -60,14 +69,18 @@ class Node:
         if self.more_specific_than(new_node):
             if new_node.direction(key) == 1:
                 new_node.zero_bit = self
+                new_node.n_zero = self.count()
             else:
                 new_node.one_bit = self
+                new_node.n_one = self.count()
             return new_node
         else:
             if self.direction(key) == 1:
                 self.one_bit = self.one_bit.insert(key, new_node)
+                self.n_one = self.one_bit.count()
             else:
                 self.zero_bit = self.zero_bit.insert(key, new_node)
+                self.n_zero = self.zero_bit.count()
             return self
 
     def more_specific_than(self, node):
@@ -108,6 +121,9 @@ class Entry:
     def traverse(self):
         yield self
 
+    def count(self):
+        return 1
+
     def find_top(self, prefix, current_top):
         return current_top
 
@@ -123,8 +139,10 @@ class Entry:
     def insert(self, key, node):
         if node.direction(key) == 1:
             node.zero_bit = self
+            node.n_zero = 1
         else:
             node.one_bit = self
+            node.n_one = 1
         return node
 
 
@@ -134,6 +152,11 @@ class Entry:
 class Tree:
     def __init__(self):
         self.root = None
+
+    def count(self):
+        if self.root is None:
+            return 0
+        return self.root.count()
 
     def insert(self, key, value):
         key = key.encode('utf-8') if not isinstance(key, bytes) else key
@@ -173,12 +196,10 @@ class Tree:
     def delete(self, key):
         if self.root is None:
             return 
+
         key = key.encode('utf-8') if not isinstance(key, bytes) else key
         self.root, entry = self.root.delete(key)
         return entry
-
-    def __str__(self):
-        return "<Tree {}>".format(self.root)
 
     def prefix_find(self, prefix):
         if self.root is None:
@@ -198,16 +219,22 @@ class Tree:
         if entry.key.startswith(prefix):
             return top.traverse()
 
+    def __str__(self):
+        return "<Tree {}>".format(self.root)
+
+
 if __name__ == '__main__':
     t = Tree()
-    for i,k in enumerate(["abc", "abcd", "bbcd","aaaaaaaa","AAAA","CCC","zzzZZZ"]):
-        print("insert {} {}".format(k,t.insert(k,i)))
+    for i,k in enumerate(["abc", "abcd", "bbcd","aaaaaaaa","AAAA","ACCC","AzzzZZZ"]):
+        print("insert {} {}, count {}".format(k,t.insert(k,i), t.count()))
     for k in ["abc", "abcd", "bbcd", "xxx", "","sjsjjsjsjsjsjjs"]:
         print("lookup {} {}".format(k,t.lookup(k)))
     for k in ["abc", "abcd", "bbcd", "xxx", "","sjsjjsjsjsjsjjs"]:
-        print("delete {} {}".format(k, t.delete(k)))
+        print("delete {} {}, count {}".format(k, t.delete(k), t.count()))
     for k in ["abc", "abcd", "bbcd"]:
         print("lookup {} {}".format(k,t.lookup(k)))
+    for k in t.prefix_find("A"):
+        print("prefix A {}".format(k))
     for k in t.prefix_find(""):
-        print("prefix {}".format(k))
-
+        print("prefix '' {}".format(k))
+    print(t)
