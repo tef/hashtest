@@ -1,10 +1,212 @@
+"""A Critbit Tree for byte strings
+
+A critbit trie is a bitwise prefix trie, with path compression - all 
+nodes with one child are skipped. 
+
+A critbit provides a dictionary of key-value pairs (entries):
+
+>>> t = Tree()
+>>> t.insert(b"aaa", 1)
+<trie.Entry instance at 0x1029833f8>
+>>> t.lookup(b"aaa")
+1
+
+but also provides traverse_prefix(prefix), and traverse() methods
+which return generators of all Entries that match.
+
+This is based upon https://www.imperialviolet.org/binary/critbit.pdf, but
+changed to not rely on \0 terminated strings, pointer aritmetic, assignment
+to two-star pointers, iteration, or flags for internal/external.
+
+Instead this uses recursion and method calls. Hooray.
+
+"""
+
 from collections import namedtuple
 
 import os.path
 import random
 
+class Node:
+    """ Internal object, represents a critbit node, at a byte position,
+    and a bitmask when &'d with a byte, is 0xFF if the bit is set, and 
+    less than 0xFF otherwise.
+
+    We use this masking so that (1+(byte | mask)) >> 8 is 1 if the bit is set
+    and 0 if the bit is not set.
+
+    A mask for bit 3 would be b11111011, a mask for bit 8 would be b01111111.
+    n.b if mask_a < mask_b, a is a higher bit.
+    """
+
+    def __init__(self, pos, mask):
+        self.pos = pos
+        self.mask = mask
+        self.child = [None, None]
+
+    def count(self):
+        return self.child[0].count() + self.child[1].count()
+
+    def traverse(self):
+        for x in self.child[0].traverse():
+            yield x
+        for y in self.child[1].traverse():
+            yield y
+
+    def random_walk(self, rng):
+        if rng.randrange(self.count()) < self.child[0].count():
+            return self.child[0].random_walk(rng)
+        else:
+            return self.child[1].random_walk(rng)
+
+    def direction(self, key):
+        # keys are padded with trailing 0 bytes
+        byte = key[self.pos] if self.pos < len(key) else 0
+        # if the bit clear in mask is set in byte, return 1, else 0
+        return (1 + (self.mask | byte)) >> 8 
+
+    def get(self, key):
+        return self.child[self.direction(key)]
+
+    def walk(self, key):
+        """ Seek to the entity closest to the key in terms of critical bits shared,
+        but it may not share a prefix """
+        return self.get(key).walk(key)
+
+    def find_top(self, prefix, current_top):
+        """Find the top node that matches the prefix in terms of 
+        critical bits shared, it may not share a prefix"""
+
+        if self.pos < len(prefix):
+            # We don't need to check mask because we're dealing with bytes.
+            top = self.get(prefix)
+            # If the current node is at a position inside the prefix,
+            # then one child will have a bit in common with the key
+            # and therefore that child is a top candidate
+            return top.find_top(prefix, top)
+        # If we are beyond the current prefix, we are the top candidate
+        return current_top
+
+    def insert(self, key, new_node):
+        """ This method is called on a node, and returns the new value for it
+        in the node that contains it. By returning the new value, we 
+        can swap in the new_node we want to insert, without having access
+        to the parent node.
+        """
+        if (self.pos > new_node.pos) or \
+           (self.pos == new_node.pos and self.mask > new_node.mask):
+            # If the current node refers to a longer prefix than the new_node
+            # then it is the best candidate to become a child of new_node,
+            # and replace the current_node in the parent
+            # mask is inverted: so if a > b then a's mask is for more specific prefix
+            dir = new_node.direction(key)
+            new_node.child[1-dir] = self
+            return new_node
+        else:
+            # Either child will have a bit in common with the key,
+            # so we deletgate to it and overwrite it, and return
+            # self as we do not require the parent to change.
+            dir = self.direction(key)
+            self.child[dir] = self.child[dir].insert(key, new_node)
+            return self
+
+    def delete(self, key):
+        """Delete a key from the tree, and return the current or a new node to
+        replace this one in the parent node."""
+        dir = self.direction(key)
+        # Delegate to the child closest to the key
+        self.child[dir], entry = self.child[dir].delete(key)
+        # If it no longer exists, return the other child to replace
+        # this object in the parent
+        if self.child[dir] is None:
+            return self.child[1-dir], entry
+        # Otherwise, no change to parent.
+        return self, entry
+
+    def __str__(self):
+        return "<Node {}:{:b} {}:{}>".format(self.pos, self.mask ^255, self.child[0], self.child[1])
+
+    @classmethod
+    def from_smallest_prefix_of(cls, key_a, key_b):
+        """ Given two keys (bytes), compute the smallest prefix,
+        and thus the smallest critical bit. Store this bit as a byte position,
+        and an inverted mask. Return a new Node with pos and mask set, but
+        empty child array"""
+
+        # heh heh heh
+        prefix = os.path.commonprefix((key_a, key_b))
+        new_pos = len(prefix)
+
+        # we null pad either key with 0's
+        a_byte = 0 if new_pos >= len(key_a) else key_a[new_pos]
+        b_byte = 0 if new_pos >= len(key_b) else key_b[new_pos]
+        new_mask = b_byte ^ a_byte 
+
+        # mask is all bits different, and at least one should be
+        if new_mask == 0:
+            raise AssertionError('what')
+
+        # do bit tricks:
+        # if x = 2, 4, 8, 16, 32, etc, x & (x-1) == 0
+        # if x not power of 2, x &(x-1) clears bit but not leading bit.
+        while new_mask & (new_mask-1) != 0: # all but one bit is set
+            new_mask = new_mask & (new_mask-1) # clear out lower order bit
+        # We use an inverted mask to make ((byte | mask)+1) >> 8, 1 or 0
+        # rather than using a condition. It's a leftover from c but i like
+        # but tricks
+        new_mask = new_mask ^ 255 
+
+        return cls(new_pos, new_mask)
+
+class Entry:
+    """A k-v pair"""
+    def __init__(self, key, value):
+        self.key = key
+        self.value = value
+
+    def count(self):
+        return 1
+
+    def walk(self, key):
+        # Again, prefix(self.key) may not be prefix(key)   
+        return self
+
+    def random_walk(self, rng):
+        return self
+
+    def traverse(self):
+        yield self
+
+    def find_top(self, prefix, current_top):
+        # We are the closest item to the prefix
+        return current_top
+
+    def insert(self, key, node):
+        # We're inserting a node to replace us,
+        # So find out where we put the new entry
+        dir = node.direction(key)
+        # and stick this entry in the other slot
+        node.child[1-dir] = self
+        return node
+
+    def delete(self, key):
+        if key == self.key:
+            # Returning None here instructs the parent
+            # that this entry is gone, and the parent
+            # will in turn return the other child to replace it.
+            return None, key
+        else:
+            # Otherwise, no changes
+            return self, None
+
+    def __str__(self):
+        return "{}".format(self.key)
+
 
 class Tree:
+    """ This is the wrapper class for the critbit trie, which manages building
+    nodes, entities, and linking them together. 90% of this is empty tree handling"""
+
     def __init__(self):
         self.root = None
 
@@ -20,10 +222,15 @@ class Tree:
         key = key.encode('utf-8') if not isinstance(key, bytes) else key
         entry = self.root.walk(key)
 
-        if entry.key == key:
+        if entry.key == key: # check it actually matches.
             return entry.value
 
-    def prefix_find(self, prefix):
+    def traverse(self):
+        if self.root is None:
+            return ()
+        return self.root.traverse() # returning a generator. heh
+
+    def traverse_prefix(self, prefix):
         if self.root is None:
             return ()
 
@@ -31,15 +238,25 @@ class Tree:
         if prefix:
             top = self.root.find_top(prefix, None)
         else:
-            top = self.root
+            top = self.root # use the root for empty prefix, as find_top
+            # returns children of root.
 
-        if top is None:
-            return ()
+        # top can be either a Node or an Entry
+        # for an entry:
+        # all parent nodes have a shorter pos than the length of the prefix.
+        # so it is the only item in the tree that could match the prefix
 
+        # if it is a node, then this node is the node where it's parent
+        # had the highest pos shorter than the prefix length, and the node
+        # itself's position will be higher than the prefix length.
+        # therefore all children of this node share a common prefix
+        # greater than the key, 
+
+        # We walk to the first entry under top, and check the prefix
+            
         entry = top.walk(prefix)
-
         if entry.key.startswith(prefix):
-            return top.traverse()
+            return top.traverse() # return a generator
 
     def random_walk(self, rng):
         if self.root is None:
@@ -49,31 +266,32 @@ class Tree:
 
     def insert(self, key, value):
         key = key.encode('utf-8') if not isinstance(key, bytes) else key
-        key_len = len(key)
 
         if self.root is None:
             self.root = Entry(key, value)
             return self.root
 
+        # Find the closest entry to the key 
         entry = self.root.walk(key)
-        entry_key = entry.key
-
-        if key == entry_key:
+        if key == entry.key:
             return entry
-
+        
+        # Build a new entry to insert
         new_entry = Entry(key, value)
-        new_node = Node.from_smallest_prefix_of(key, entry_key)
+        # and a node to hold it, using the smallest shared prefix
+        # of the key and the key of the closest item
+        new_node = Node.from_smallest_prefix_of(key, entry.key)
 
-        if new_node.direction(new_entry.key) == 1:
-            new_node.one_bit = new_entry
-            new_node.n_one = 1
-        else:
-            new_node.zero_bit = new_entry
-            new_node.n_zero = 1
+        # we stick our new entry in the child slot
+        dir = new_node.direction(new_entry.key)
+        new_node.child[dir] = new_entry
 
+        # and ask the root to insert the new node, and return
+        # the replacement root
         self.root = self.root.insert(key, new_node)
 
-        if new_node.zero_bit is None or new_node.one_bit is None:
+        # double check.
+        if new_node.child[0] is None or new_node.child[1] is None:
             raise AssertionError("incomplete tree built")
 
         return new_entry
@@ -83,149 +301,12 @@ class Tree:
             return
 
         key = key.encode('utf-8') if not isinstance(key, bytes) else key
+        # delegate to tree, returns new root and entry if found.
         self.root, entry = self.root.delete(key)
         return entry
 
     def __str__(self):
         return "<Tree {}>".format(self.root)
-
-class Entry:
-    def __init__(self, key, value):
-        self.key = key
-        self.value = value
-
-    def count(self):
-        return 1
-
-    def walk(self, key):
-        return self
-
-    def random_walk(self, rng):
-        return self
-
-    def traverse(self):
-        yield self
-
-    def find_top(self, prefix, current_top):
-        return current_top
-
-    def insert(self, key, node):
-        if node.direction(key) == 1:
-            node.zero_bit = self
-            node.n_zero = 1
-        else:
-            node.one_bit = self
-            node.n_one = 1
-        return node
-
-    def delete(self, key):
-        if key == self.key:
-            return None, key
-        else:
-            return self, None
-
-    def __str__(self):
-        return "{}".format(self.key)
-
-class Node:
-    def __init__(self, pos, mask):
-        self.pos = pos
-        self.mask = mask
-        self.zero_bit = None
-        self.one_bit = None
-        self.n_zero = 0
-        self.n_one = 0
-
-    def count(self):
-        return self.n_zero+self.n_one
-
-    def traverse(self):
-        for x in self.zero_bit.traverse():
-            yield x
-        for y in self.one_bit.traverse():
-            yield y
-
-    def random_walk(self, rng):
-        if rng.randrange(self.count()) < self.n_zero:
-            return self.zero_bit.random_walk(rng)
-        else:
-            return self.one_bit.random_walk(rng)
-
-    def direction(self, key):
-        # Mask is 1101111 so if or'd we get ff if bit 5 is set
-        # ff +1 >> 8 is 1, < ff is 0
-        byte = key[self.pos] if self.pos < len(key) else 0
-        return (1 + (self.mask | byte)) >> 8
-
-    def get(self, key):
-        if self.direction(key) == 1:
-            return self.one_bit
-        else:
-            return self.zero_bit
-
-    def walk(self, key):
-        return self.get(key).walk(key)
-
-    def find_top(self, key, current_top):
-        if self.pos < len(key):
-            top = self.get(key)
-            return top.find_top(key, top)
-        return current_top
-
-    def insert(self, key, new_node):
-        if (self.pos > new_node.pos) or \
-           (self.pos == new_node.pos and self.mask > new_node.mask):
-            # mask is inverted so if a > b then a's mask is for more specific prefix
-            if new_node.direction(key) == 1:
-                new_node.zero_bit = self
-                new_node.n_zero = self.count()
-            else:
-                new_node.one_bit = self
-                new_node.n_one = self.count()
-            return new_node
-        else:
-            if self.direction(key) == 1:
-                self.one_bit = self.one_bit.insert(key, new_node)
-                self.n_one = self.one_bit.count()
-            else:
-                self.zero_bit = self.zero_bit.insert(key, new_node)
-                self.n_zero = self.zero_bit.count()
-            return self
-
-    def delete(self, key):
-        if self.direction(key) == 1:
-            self.one_bit, entry = self.one_bit.delete(key)
-            if self.one_bit is None:
-                return self.zero_bit, entry
-            self.n_one = self.one_bit.count()
-        else:
-            self.zero_bit, entry = self.zero_bit.delete(key)
-            if self.zero_bit is None:
-                return self.one_bit, entry
-            self.n_zero = self.zero_bit.count()
-
-        return self, entry
-
-    def __str__(self):
-        return "<Node {}:{:b} {}:{}>".format(self.pos, self.mask ^255, self.zero_bit, self.one_bit)
-
-    @classmethod
-    def from_smallest_prefix_of(cls, key_a, key_b):
-        prefix = os.path.commonprefix((key_a, key_b))
-        new_pos = len(prefix)
-
-        a_byte = 0 if new_pos >= len(key_a) else key_a[new_pos]
-        b_byte = 0 if new_pos >= len(key_b) else key_b[new_pos]
-        new_mask = b_byte ^ a_byte
-
-        if new_mask == 0:
-            raise AssertionError('what')
-
-        while new_mask & (new_mask-1) != 0: # all but one bit is set
-            new_mask = new_mask & (new_mask-1) # clear out lower order bit
-        new_mask = new_mask ^ 255 # We use an inverted mask to make other things nicer.
-
-        return cls(new_pos, new_mask)
 
 
 if __name__ == '__main__':
@@ -238,7 +319,7 @@ if __name__ == '__main__':
         print("delete {} {}, count {}".format(k, t.delete(k), t.count()))
     for k in [b"abc", b"abcd", b"bbcd"]:
         print("lookup {} {}".format(k,t.lookup(k)))
-    for k in t.prefix_find(b"A"):
+    for k in t.traverse_prefix(b"A"):
         print("prefix A {}".format(k))
-    for k in t.prefix_find(b""):
+    for k in t.traverse_prefix(b""):
         print("prefix '' {}".format(k))
