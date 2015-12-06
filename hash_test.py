@@ -20,6 +20,16 @@ def _make_hash(h):
 
 md5 = _make_hash(hashlib.md5)
 
+def _make_bhash(h):
+    def _hash(*buffer):
+        m=h()
+        for b in buffer:
+            m.update(b)
+
+        return m.digest()
+    return _hash
+
+md5b = _make_bhash(hashlib.md5)
 def djbhash(*m):
     h = 5381
     for a in m:
@@ -63,13 +73,14 @@ def consistent_hash(hash, nvnodes):
         return find
     return chooser
 
-def trie_chooser():
+def trie_chooser(hash):
     def chooser(workers):
         t = trie.Tree()
         for w in workers:
-            t.insert(w, None)
+            t.insert(hash(w), w)
         def find(message):
-            return t.choose_random(message).key
+            r = random.Random(message)
+            return t.random_walk(r).value
         return find
     return chooser
 
@@ -118,7 +129,7 @@ if __name__ == '__main__':
 
     tests = [
         ("consistent hashing (md5) 256 vnodes", consistent_hash(md5, nvnodes=250)),
-        ("trie choosing ", trie_chooser()),
+        ("trie choosing ", trie_chooser(md5b)),
         ("perfect shuffle (djbhash)", perfect_shuffle_djb()),
         #("rendevouz hashing (md5)", rendevous_hash(md5)),
     ]

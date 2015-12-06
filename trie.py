@@ -89,23 +89,11 @@ class Node:
                (self.pos == node.pos and self.mask > node.mask)
         # mask is inverted so if a > b then a's mask is for more specific prefix
 
-    def choose_random(self, seed):
-        if self.random_direction(seed) == 0:
-            return self.zero_bit.choose_random(seed)
+    def random_walk(self, rng):
+        if rng.randrange(self.count()) < self.n_zero:
+            return self.zero_bit.random_walk(rng)
         else:
-            return self.one_bit.choose_random(seed)
-
-    def random_direction(self, seed):
-        h = 5381 + self.pos + self.mask^255
-        count, mask = self.count(), self.mask
-        for b in seed:
-            h = (((h << 5) + h) + b^mask) & 4294967295
-        r = (h>>13) % count
-
-        if r < self.n_zero:
-            return 0
-        else:
-            return 1
+            return self.one_bit.random_walk(rng)
 
 
 
@@ -166,8 +154,8 @@ class Entry:
             node.n_one = 1
         return node
 
-    def choose_random(self, seed):
-        return self
+    def random_walk(self, rng):
+        return self 
 
     def __str__(self):
         return "{}".format(self.key)
@@ -247,6 +235,12 @@ class Tree:
             return None
 
         return self.root.choose_random(seed)
+
+    def random_walk(self, rng):
+        if self.root is None:
+            return None
+
+        return self.root.random_walk(rng)
 
     def __str__(self):
         return "<Tree {}>".format(self.root)
