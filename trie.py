@@ -14,10 +14,18 @@ A critbit provides a dictionary of key-value pairs (entries):
 but also provides traverse_prefix(prefix), and traverse() methods
 which return generators of all Entries that match.
 
+A critbit tree is a bunch of Nodes and Entities. Entities represent
+the key-value pairs, and Nodes store a critical bit (as a byte position & byte mask)
+, and two children (0 and 1).
+
+the children of a node are ones which have the critical bit set to 1 (or 0), at that
+position. 
+
 This is based upon https://www.imperialviolet.org/binary/critbit.pdf, but
 changed to not rely on \0 terminated strings, pointer aritmetic, assignment
 to two-star pointers, iteration, flags for internal/external, or
-the branch avoiding inverted bitmask.
+the branch avoiding inverted bitmask. It's much less C but I do not know
+how Python it is.
 """
 
 from collections import namedtuple
