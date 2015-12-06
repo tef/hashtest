@@ -231,15 +231,15 @@ class Tree:
         if entry.key == key: # check it actually matches.
             return entry.value
 
-    def first_key_greater_than(self, key):
+    def first_entry_greater_than(self, key, cyclic=False):
         if self.root is None:
             return
 
         key = key.encode('utf-8') if not isinstance(key, bytes) else key
         entry = self.root.first_greater_than(key)
-
-        if entry:
-            return entry.key
+        if entry is None and cyclic:
+            entry = self.root.walk(b"")
+        return entry
 
     def traverse(self):
         if self.root is None:
@@ -343,6 +343,6 @@ if __name__ == '__main__':
         print("prefix '' {}".format(k))
 
     for k in [b"ABB", "AC","ACCC","AC","AD", "zz", "B"]:  
-        print("first greater than {} is {}".format(k, t.first_key_greater_than(k)))
+        print("first greater than {} is {}".format(k, t.first_entry_greater_than(k).key))
     print(t)
 

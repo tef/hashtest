@@ -73,6 +73,20 @@ def consistent_hash(hash, nvnodes):
         return find
     return chooser
 
+def consistent_hash_trie(hash, nvnodes):
+    def chooser(workers):
+        vnodes = [uuid().bytes for _ in range(nvnodes)]
+        t = trie.Tree()
+        for h, worker in ((hash(n, w),w) for w in workers for n in vnodes):
+            t.insert(h, worker)
+
+        def find(message):
+            h = hash(message)
+            k = t.first_entry_greater_than(h, cyclic=True)
+            return k.value
+        return find
+    return chooser
+
 def trie_chooser(hash):
     def chooser(workers):
         t = trie.Tree()
@@ -129,6 +143,7 @@ if __name__ == '__main__':
 
     tests = [
         ("consistent hashing (md5) 256 vnodes", consistent_hash(md5, nvnodes=250)),
+        ("consistent hashing over trie (md5) 256 vnodes", consistent_hash_trie(md5b, nvnodes=250)),
         ("trie choosing ", trie_chooser(md5b)),
         ("perfect shuffle (djbhash)", perfect_shuffle_djb()),
         #("rendevouz hashing (md5)", rendevous_hash(md5)),
