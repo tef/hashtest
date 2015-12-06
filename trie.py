@@ -18,8 +18,6 @@ This is based upon https://www.imperialviolet.org/binary/critbit.pdf, but
 changed to not rely on \0 terminated strings, pointer aritmetic, assignment
 to two-star pointers, iteration, flags for internal/external, or
 the branch avoiding inverted bitmask.
-
-Instead this uses recursion, and method calls. Hooray.
 """
 
 from collections import namedtuple
@@ -69,13 +67,14 @@ class Node:
         critical bits shared, it may not share a prefix"""
 
         if self.pos < len(prefix):
-            # We don't need to check mask because we're dealing with bytes.
+            # keys are made of bytes, so if pos is under, mask fits too..
             top = self.get(prefix)
             # If the current node is at a position inside the prefix,
             # then one child will have a bit in common with the key
             # and therefore that child is a top candidate
             return top.find_top(prefix, top)
-        # If we are beyond the current prefix, we are the top candidate
+        # If we are beyond the current prefix,
+        # whatever was passed in is the best candidate.
         return current_top
 
     def insert(self, key, new_node):
@@ -87,8 +86,9 @@ class Node:
         if (self.pos > new_node.pos) or \
            (self.pos == new_node.pos and self.mask < new_node.mask):
             # If the current node refers to a longer prefix than the new_node
-            # then it is the best candidate to become a child of new_node,
-            # and replace the current_node in the parent
+            # It's the one we want to replace in the tree, so 
+            # we move it inside of new_node into the empty child slot
+            # and return new_node to update the parent.
             dir = new_node.direction(key)
             new_node.child[1-dir] = self
             return new_node
