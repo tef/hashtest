@@ -77,6 +77,14 @@ class Tree:
             but it may not share a prefix """
             return self.get(key).walk(key)
 
+        def first_greater_than(self, key):
+            dir = self.direction(key)
+            node = self.child[dir].first_greater_than(key)
+            if dir == 0 and node is None:
+                # we can be bigger
+                node = self.child[1].first_greater_than(key)
+            return node
+
         def find_top(self, prefix, current_top):
             """Find the top node that matches the prefix in terms of 
             critical bits shared, it may not share a prefix"""
@@ -179,6 +187,10 @@ class Tree:
         def traverse(self):
             yield self
 
+        def first_greater_than(self, key):
+            if self.key > key:
+                return self
+
         def find_top(self, prefix, current_top):
             # We are the closest item to the prefix
             return current_top
@@ -218,6 +230,16 @@ class Tree:
 
         if entry.key == key: # check it actually matches.
             return entry.value
+
+    def first_key_greater_than(self, key):
+        if self.root is None:
+            return
+
+        key = key.encode('utf-8') if not isinstance(key, bytes) else key
+        entry = self.root.first_greater_than(key)
+
+        if entry:
+            return entry.key
 
     def traverse(self):
         if self.root is None:
@@ -319,3 +341,8 @@ if __name__ == '__main__':
         print("prefix A {}".format(k))
     for k in t.traverse_prefix(b""):
         print("prefix '' {}".format(k))
+
+    for k in [b"ABB", "AC","ACCC","AC","AD", "zz", "B"]:  
+        print("first greater than {} is {}".format(k, t.first_key_greater_than(k)))
+    print(t)
+
