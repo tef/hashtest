@@ -9,16 +9,14 @@ class Node:
         self.mask = mask
         self.zero_bit = None
         self.one_bit = None
-        self.parent = None
 
     def direction(self, key):
-        byte = key[self.pos] if self.pos < len(key) else 0
         # Mask is 1101111 so if or'd we get ff if bit 5 is set
         # ff +1 >> 8 is 1, < ff is 0
+        byte = key[self.pos] if self.pos < len(key) else 0
         return (1 + (self.mask | byte)) >> 8
 
     def set(self, entry):
-        print(self, entry)
         if self.direction(entry.key) == 1:
             self.one_bit = entry
         else:
@@ -32,6 +30,18 @@ class Node:
 
     def walk(self, key):
         return self.get(key).walk(key)
+
+    def traverse(self):
+        for x in self.zero_bit.traverse():
+            yield x
+        for y in self.one_bit.traverse():
+            yield y
+
+    def find_top(self, key, current_top):
+        if self.pos < len(key):
+            return self.get(key).find_top(key, self)
+        return current_top
+
 
     def delete(self, key):
         if self.direction(key) == 1:
@@ -47,8 +57,7 @@ class Node:
 
             
     def insert(self, key, new_node):
-        if self.finer_than(new_node):
-            # This Node should be a child of new_node
+        if self.more_specific_than(new_node):
             if new_node.direction(key) == 1:
                 new_node.zero_bit = self
             else:
@@ -61,16 +70,16 @@ class Node:
                 self.zero_bit = self.zero_bit.insert(key, new_node)
             return self
 
-
-    def finer_than(self, node):
+    def more_specific_than(self, node):
         return (self.pos > node.pos) or \
                (self.pos == node.pos and self.mask > node.mask)
-        # mask is inverted so if a > b then a's mask is for lower bit (longer prefix)
+        # mask is inverted so if a > b then a's mask is for more specific prefix
 
     def __str__(self):
         return "<Node {}:{:b} {}:{}>".format(self.pos, self.mask ^255, self.zero_bit, self.one_bit)
+
     @classmethod
-    def between(cls, key_a, key_b):
+    def from_smallest_prefix_of(cls, key_a, key_b):
         prefix = os.path.commonprefix((key_a, key_b))
         new_pos = len(prefix)
 
@@ -86,6 +95,7 @@ class Node:
         new_mask = new_mask ^ 255 # We use an inverted mask to make other things nicer.
 
         return cls(new_pos, new_mask)
+
         
 class Entry:
     def __init__(self, key, value):
@@ -94,6 +104,15 @@ class Entry:
 
     def walk(self, key):
         return self
+    
+    def traverse(self):
+        yield self
+
+    def find_top(self, prefix, current_top):
+        return current_top
+
+    def more_specific_than(self, node):
+        return True
 
     def delete(self, key):
         if key == self.key:
@@ -102,11 +121,12 @@ class Entry:
             return self, None
 
     def insert(self, key, node):
-        node.set(self)
+        if node.direction(key) == 1:
+            node.zero_bit = self
+        else:
+            node.one_bit = self
         return node
 
-    def finer_than(self, node):
-        return True
 
     def __str__(self):
         return "{}".format(self.key)
@@ -121,22 +141,22 @@ class Tree:
 
         if self.root is None:
             self.root = Entry(key, value) 
-            #print('  create', self.root)
             return self.root
 
         entry = self.root.walk(key)
-        #print('  walk', entry)
         entry_key = entry.key
 
         if key == entry_key:
             return entry
         
         new_entry = Entry(key, value)
-        new_node = Node.between(key, entry_key)
-
+        new_node = Node.from_smallest_prefix_of(key, entry_key)
         new_node.set(new_entry)
-        ##print('  new_node', new_node)
+
         self.root = self.root.insert(key, new_node)
+
+        if new_node.zero_bit is None or new_node.one_bit is None:
+            raise AssertionError("what")
 
         return new_entry
 
@@ -147,7 +167,7 @@ class Tree:
         key = key.encode('utf-8') if not isinstance(key, bytes) else key
         entry = self.root.walk(key)
 
-        if entry and entry.key == key:
+        if entry.key == key:
             return entry.value
 
     def delete(self, key):
@@ -160,17 +180,34 @@ class Tree:
     def __str__(self):
         return "<Tree {}>".format(self.root)
 
+    def prefix_find(self, prefix):
+        if self.root is None:
+            return ()
+
+        prefix = prefix.encode('utf-8') if not isinstance(prefix, bytes) else prefix
+        if prefix:
+            top = self.root.find_top(prefix, None)
+        else:   
+            top = self.root
+
+        if top is None:
+            return ()
+
+        entry = top.walk(prefix)
+
+        if entry.key.startswith(prefix):
+            return top.traverse()
+
 if __name__ == '__main__':
     t = Tree()
     for i,k in enumerate(["abc", "abcd", "bbcd","aaaaaaaa","AAAA","CCC","zzzZZZ"]):
         print("insert {} {}".format(k,t.insert(k,i)))
-        print()
-        print(t)
-        print()
     for k in ["abc", "abcd", "bbcd", "xxx", "","sjsjjsjsjsjsjjs"]:
         print("lookup {} {}".format(k,t.lookup(k)))
     for k in ["abc", "abcd", "bbcd", "xxx", "","sjsjjsjsjsjsjjs"]:
-        print("delete{} {}".format(k, t.delete(k)))
+        print("delete {} {}".format(k, t.delete(k)))
     for k in ["abc", "abcd", "bbcd"]:
         print("lookup {} {}".format(k,t.lookup(k)))
+    for k in t.prefix_find(""):
+        print("prefix {}".format(k))
 
