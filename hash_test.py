@@ -7,6 +7,7 @@ import time
 import random
 from collections import Counter, namedtuple
 from statistics import mean, stdev
+import trie
 
 def _make_hash(h):
     def _hash(*buffer):
@@ -62,6 +63,16 @@ def consistent_hash(hash, nvnodes):
         return find
     return chooser
 
+def trie_chooser():
+    def chooser(workers):
+        t = trie.Tree()
+        for w in workers:
+            t.insert(w, None)
+        def find(message):
+            return t.choose_random(message).key
+        return find
+    return chooser
+
 def rendevous_hash(hash):
     def chooser(workers):
         def find(m):
@@ -106,13 +117,14 @@ if __name__ == '__main__':
     messages = [uuid().bytes for n in range(nmessages)]
 
     tests = [
+        ("consistent hashing (md5) 256 vnodes", consistent_hash(md5, nvnodes=250)),
+        ("trie choosing ", trie_chooser()),
         ("perfect shuffle (djbhash)", perfect_shuffle_djb()),
-        ("consistent hashing (md5) 256 vnodes", consistent_hash(md5, nvnodes=7)),
-        ("rendevouz hashing (md5)", rendevous_hash(md5)),
+        #("rendevouz hashing (md5)", rendevous_hash(md5)),
     ]
+    print ("setup done")
     runs = []
     for name, make_chooser in tests:
-        print(name)
         counter = Counter({w:0 for w in workers})
         choose_server = make_chooser(workers)
         t=timer()

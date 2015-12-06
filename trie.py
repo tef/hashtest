@@ -1,6 +1,7 @@
 from collections import namedtuple
 
 import os.path
+import random
 
 
 class Node:
@@ -88,6 +89,26 @@ class Node:
                (self.pos == node.pos and self.mask > node.mask)
         # mask is inverted so if a > b then a's mask is for more specific prefix
 
+    def choose_random(self, seed):
+        if self.random_direction(seed) == 0:
+            return self.zero_bit.choose_random(seed)
+        else:
+            return self.one_bit.choose_random(seed)
+
+    def random_direction(self, seed):
+        h = 5381 + self.pos + self.mask^255
+        count, mask = self.count(), self.mask
+        for b in seed:
+            h = (((h << 5) + h) + b^mask) & 4294967295
+        r = (h>>13) % count
+
+        if r < self.n_zero:
+            return 0
+        else:
+            return 1
+
+
+
     def __str__(self):
         return "<Node {}:{:b} {}:{}>".format(self.pos, self.mask ^255, self.zero_bit, self.one_bit)
 
@@ -145,6 +166,8 @@ class Entry:
             node.n_one = 1
         return node
 
+    def choose_random(self, seed):
+        return self
 
     def __str__(self):
         return "{}".format(self.key)
@@ -219,6 +242,12 @@ class Tree:
         if entry.key.startswith(prefix):
             return top.traverse()
 
+    def choose_random(self, seed):
+        if self.root is None:
+            return None
+
+        return self.root.choose_random(seed)
+
     def __str__(self):
         return "<Tree {}>".format(self.root)
 
@@ -237,4 +266,3 @@ if __name__ == '__main__':
         print("prefix A {}".format(k))
     for k in t.prefix_find(""):
         print("prefix '' {}".format(k))
-    print(t)
