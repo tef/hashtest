@@ -16,10 +16,10 @@ which return generators of all Entries that match.
 
 This is based upon https://www.imperialviolet.org/binary/critbit.pdf, but
 changed to not rely on \0 terminated strings, pointer aritmetic, assignment
-to two-star pointers, iteration, or flags for internal/external.
+to two-star pointers, iteration, flags for internal/external, or
+the branch avoiding inverted bitmask.
 
-Instead this uses recursion and method calls. Hooray.
-
+Instead this uses recursion, and method calls. Hooray.
 """
 
 from collections import namedtuple
@@ -29,14 +29,7 @@ import random
 
 class Node:
     """ Internal object, represents a critbit node, at a byte position,
-    and a bitmask when &'d with a byte, is 0xFF if the bit is set, and 
-    less than 0xFF otherwise.
-
-    We use this masking so that (1+(byte | mask)) >> 8 is 1 if the bit is set
-    and 0 if the bit is not set.
-
-    A mask for bit 3 would be b11111011, a mask for bit 8 would be b01111111.
-    n.b if mask_a < mask_b, a is a higher bit.
+    and a bitmask 
     """
 
     def __init__(self, pos, mask):
@@ -60,10 +53,8 @@ class Node:
             return self.child[1].random_walk(rng)
 
     def direction(self, key):
-        # keys are padded with trailing 0 bytes
         byte = key[self.pos] if self.pos < len(key) else 0
-        # if the bit clear in mask is set in byte, return 1, else 0
-        return (1 + (self.mask | byte)) >> 8 
+        return (self.mask & byte) == self.mask 
 
     def get(self, key):
         return self.child[self.direction(key)]
@@ -94,11 +85,10 @@ class Node:
         to the parent node.
         """
         if (self.pos > new_node.pos) or \
-           (self.pos == new_node.pos and self.mask > new_node.mask):
+           (self.pos == new_node.pos and self.mask < new_node.mask):
             # If the current node refers to a longer prefix than the new_node
             # then it is the best candidate to become a child of new_node,
             # and replace the current_node in the parent
-            # mask is inverted: so if a > b then a's mask is for more specific prefix
             dir = new_node.direction(key)
             new_node.child[1-dir] = self
             return new_node
@@ -124,13 +114,13 @@ class Node:
         return self, entry
 
     def __str__(self):
-        return "<Node {}:{:b} {}:{}>".format(self.pos, self.mask ^255, self.child[0], self.child[1])
+        return "<Node {}:{:b} {}:{}>".format(self.pos, self.mask, self.child[0], self.child[1])
 
     @classmethod
     def from_smallest_prefix_of(cls, key_a, key_b):
         """ Given two keys (bytes), compute the smallest prefix,
         and thus the smallest critical bit. Store this bit as a byte position,
-        and an inverted mask. Return a new Node with pos and mask set, but
+        and an mask. Return a new Node with pos and mask set, but
         empty child array"""
 
         # heh heh heh
@@ -151,10 +141,6 @@ class Node:
         # if x not power of 2, x &(x-1) clears bit but not leading bit.
         while new_mask & (new_mask-1) != 0: # all but one bit is set
             new_mask = new_mask & (new_mask-1) # clear out lower order bit
-        # We use an inverted mask to make ((byte | mask)+1) >> 8, 1 or 0
-        # rather than using a condition. It's a leftover from c but i like
-        # but tricks
-        new_mask = new_mask ^ 255 
 
         return cls(new_pos, new_mask)
 
@@ -282,13 +268,14 @@ class Tree:
         # of the key and the key of the closest item
         new_node = Node.from_smallest_prefix_of(key, entry.key)
 
-        # we stick our new entry in the child slot
+        # we stick our new entry in the matching child slot
         dir = new_node.direction(new_entry.key)
         new_node.child[dir] = new_entry
 
         # and ask the root to insert the new node, and return
         # the replacement root
         self.root = self.root.insert(key, new_node)
+        # inside of this, it swaps new_node in
 
         # double check.
         if new_node.child[0] is None or new_node.child[1] is None:
